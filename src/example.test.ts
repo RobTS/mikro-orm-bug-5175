@@ -1,34 +1,56 @@
-import { Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/sqlite';
+import { Entity, Index, PrimaryKey, Property } from "@mikro-orm/decorators/legacy";
+import { FullTextType, MikroORM, ScalarReference } from "@mikro-orm/postgresql";
+import type { Ref } from "@mikro-orm/postgresql"
 
 @Entity()
-class User {
+@Index({properties: ['id']})
+export class Tag {
+  @PrimaryKey({type: 'text'})
+  id: string;
 
-  @PrimaryKey()
-  id!: number;
+  @Property({type: 'text'})
+  label: string;
 
-  @Property()
-  name: string;
+  @Property({
+    type: FullTextType,
+    default: '',
+    lazy: true,
+    ref: true,
+  })
+  searchablePropertiesVector: Ref<string>;
 
-  @Property({ unique: true })
-  email: string;
+  @Property({
+    type: "datetime",
+    length: 3,
+    onCreate: () => new Date(),
+  })
+  creationDate: Date;
 
-  constructor(name: string, email: string) {
-    this.name = name;
-    this.email = email;
-  }
-
+  @Property({
+    type: "datetime",
+    length: 3,
+    onCreate: () => new Date(),
+    onUpdate: () => new Date(),
+  })
+  lastUpdated: Date;
 }
 
 let orm: MikroORM;
 
 beforeAll(async () => {
   orm = await MikroORM.init({
-    dbName: ':memory:',
-    entities: [User],
+    entities: [Tag],
+    user: "postgres",
+    password: "postgres",
+    dbName: "test_5175",
+    port:  5432,
+    host: "localhost",
     debug: ['query', 'query-params'],
     allowGlobalContext: true, // only for testing
   });
-  await orm.schema.refreshDatabase();
+  const generator = orm.schema;
+  await generator.drop();
+  await generator.create();
 });
 
 afterAll(async () => {
@@ -36,16 +58,20 @@ afterAll(async () => {
 });
 
 test('basic CRUD example', async () => {
-  orm.em.create(User, { name: 'Foo', email: 'foo' });
-  await orm.em.flush();
+  const tag = new Tag();
+  orm.em.assign(tag, {
+    id: 'Test',
+    label: 'Label',
+  });
+  tag.searchablePropertiesVector = new ScalarReference<string>();
+  tag.searchablePropertiesVector.set('Test Label');
+
+  await orm.em.persist(tag).flush();
+
   orm.em.clear();
 
-  const user = await orm.em.findOneOrFail(User, { email: 'foo' });
-  expect(user.name).toBe('Foo');
-  user.name = 'Bar';
-  orm.em.remove(user);
-  await orm.em.flush();
-
-  const count = await orm.em.count(User, { email: 'foo' });
-  expect(count).toBe(0);
+  const sameTag = await orm.em.findOneOrFail(Tag, {id: tag.id});
+  sameTag.label = 'NewLabel';
+  await orm.em.persist(sameTag).flush();
 });
+
